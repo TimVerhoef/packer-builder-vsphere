@@ -4,13 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
-	"strings"
-	"time"
-
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
+	"log"
+	"strings"
+	"time"
 )
 
 type VirtualMachine struct {
@@ -51,7 +50,7 @@ type CreateConfig struct {
 	DiskControllerType string   // example: "scsi", "pvscsi"
 	Firmware           string   // efi or bios
 	Folder             string
-  GlobalDiskType     string   // "thick_eager", "thick_lazy", "thin"
+	GlobalDiskType     string   // "thick_eager", "thick_lazy", "thin"
 	GuestOS            string   // example: otherGuest
 	Host               string
 	Name               string
@@ -218,12 +217,6 @@ func (vm *VirtualMachine) Clone(ctx context.Context, config *CloneConfig) (*Virt
 	var cloneSpec types.VirtualMachineCloneSpec
 	cloneSpec.Location = relocateSpec
 	cloneSpec.PowerOn = false
-
-	devices := object.VirtualDeviceList{}
-	devices, err = appendNetworks(template, devices, config)
-	if err != nil {
-		return nil, err
-	}
 
 	if config.LinkedClone == true {
 		cloneSpec.Location.DiskMoveType = "createNewChildDiskBacking"
@@ -569,7 +562,6 @@ func addNetworks(d *Driver, devices object.VirtualDeviceList, config *CreateConf
 	} else {
 		var err error
 		for _, networkName := range config.Networks {
-	
 			network, err := d.finder.Network(d.ctx, networkName)
 			if err != nil {
 				return nil, err
