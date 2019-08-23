@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -18,19 +19,20 @@ type VirtualMachine struct {
 }
 
 type CloneConfig struct {
-	Networks     []string
+	Annotation   string
 	Cluster      string
 	Datastore    string
 	Folder       string
 	Host         string
-	Name         string
-	NetworkCard  string // example: vmxnet3
-	ResourcePool string
 	LinkedClone  bool
+	Name         string
+	Networks     []string
+	ResourcePool string
 }
 
 type HardwareConfig struct {
 	CPUs                int32
+	CpuCores            int32
 	CPUReservation      int64
 	CPULimit            int64
 	RAM                 int64
@@ -39,24 +41,26 @@ type HardwareConfig struct {
 	NestedHV            bool
 	CpuHotAddEnabled    bool
 	MemoryHotAddEnabled bool
+	VideoRAM            int64
 }
 
 type CreateConfig struct {
-	Networks           []string
-	Storage            []DiskConfig
 	Annotation         string
 	Cluster            string
 	Datastore          string
-	DiskControllerType string // example: "scsi", "pvscsi"
+	DiskControllerType string   // example: "scsi", "pvscsi"
+	Firmware           string   // efi or bios
 	Folder             string
-	GlobalDiskType     string // example: "thick_eager", "thick_lazy", "thin"
-	GuestOS            string // example: otherGuest
+  GlobalDiskType     string   // "thick_eager", "thick_lazy", "thin"
+	GuestOS            string   // example: otherGuest
 	Host               string
 	Name               string
-	NetworkCard        string // example: vmxnet3
+	NetworkCard        string   // example: vmxnet3
+	Networks           []string
 	ResourcePool       string
+	Storage            []DiskConfig
 	USBController      bool
-	Version            uint   // example: 10
+	Version            uint     // example: 10
 }
 
 type DiskConfig struct {
@@ -95,6 +99,9 @@ func (d *Driver) CreateVM(config *CreateConfig) (*VirtualMachine, error) {
 	if config.Version != 0 {
 		createSpec.Version = fmt.Sprintf("%s%d", "vmx-", config.Version)
 	}
+	if config.Firmware != "" {
+		createSpec.Firmware = config.Firmware
+	}
 
 	folder, err := d.FindFolder(config.Folder)
 	if err != nil {
@@ -107,7 +114,7 @@ func (d *Driver) CreateVM(config *CreateConfig) (*VirtualMachine, error) {
 	}
 
 	var host *object.HostSystem
-	if config.Host != "" {
+	if config.Cluster != "" && config.Host != "" {
 		h, err := d.FindHost(config.Host)
 		if err != nil {
 			return nil, err
@@ -122,16 +129,10 @@ func (d *Driver) CreateVM(config *CreateConfig) (*VirtualMachine, error) {
 
 	devices := object.VirtualDeviceList{}
 
-	devices, err = addIDE(devices)
-	if err != nil {
-		return nil, err
-	}
-
 	devices, err = addDisks(d, devices, config)
 	if err != nil {
 		return nil, err
 	}
-
 	devices, err = addNetworks(d, devices, config)
 	if err != nil {
 		return nil, err
@@ -192,22 +193,22 @@ func (vm *VirtualMachine) Devices() (object.VirtualDeviceList, error) {
 	return vmInfo.Config.Hardware.Device, nil
 }
 
-func (template *VirtualMachine) Clone(ctx context.Context, config *CloneConfig) (*VirtualMachine, error) {
-	folder, err := template.driver.FindFolder(config.Folder)
+func (vm *VirtualMachine) Clone(ctx context.Context, config *CloneConfig) (*VirtualMachine, error) {
+	folder, err := vm.driver.FindFolder(config.Folder)
 	if err != nil {
 		return nil, err
 	}
 
 	var relocateSpec types.VirtualMachineRelocateSpec
 
-	pool, err := template.driver.FindResourcePool(config.Cluster, config.Host, config.ResourcePool)
+	pool, err := vm.driver.FindResourcePool(config.Cluster, config.Host, config.ResourcePool)
 	if err != nil {
 		return nil, err
 	}
 	poolRef := pool.pool.Reference()
 	relocateSpec.Pool = &poolRef
 
-	datastore, err := template.driver.FindDatastore(config.Datastore, config.Host)
+	datastore, err := vm.driver.FindDatastore(config.Datastore, config.Host)
 	if err != nil {
 		return nil, err
 	}
@@ -218,16 +219,16 @@ func (template *VirtualMachine) Clone(ctx context.Context, config *CloneConfig) 
 	cloneSpec.Location = relocateSpec
 	cloneSpec.PowerOn = false
 
-  devices := object.VirtualDeviceList{}
-  devices, err = appendNetworks(template, devices, config)
-  if err != nil {
-    return nil, err
-  }
+	devices := object.VirtualDeviceList{}
+	devices, err = appendNetworks(template, devices, config)
+	if err != nil {
+		return nil, err
+	}
 
 	if config.LinkedClone == true {
 		cloneSpec.Location.DiskMoveType = "createNewChildDiskBacking"
 
-		tpl, err := template.Info("snapshot")
+		tpl, err := vm.Info("snapshot")
 		if err != nil {
 			return nil, err
 		}
@@ -238,7 +239,44 @@ func (template *VirtualMachine) Clone(ctx context.Context, config *CloneConfig) 
 		cloneSpec.Snapshot = tpl.Snapshot.CurrentSnapshot
 	}
 
-	task, err := template.vm.Clone(template.driver.ctx, folder.folder, config.Name, cloneSpec)
+	var configSpec types.VirtualMachineConfigSpec
+	cloneSpec.Config = &configSpec
+
+	if config.Annotation != "" {
+		configSpec.Annotation = config.Annotation
+	}
+
+	if config.Network != "" {
+		net, err := vm.driver.FindNetwork(config.Network)
+		if err != nil {
+			return nil, err
+		}
+		backing, err := net.network.EthernetCardBackingInfo(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		devices, err := vm.vm.Device(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		adapter, err := findNetworkAdapter(devices)
+		if err != nil {
+			return nil, err
+		}
+
+		adapter.GetVirtualEthernetCard().Backing = backing
+
+		config := &types.VirtualDeviceConfigSpec{
+			Device:    adapter.(types.BaseVirtualDevice),
+			Operation: types.VirtualDeviceConfigSpecOperationEdit,
+		}
+
+		configSpec.DeviceChange = append(configSpec.DeviceChange, config)
+	}
+
+	task, err := vm.vm.Clone(vm.driver.ctx, folder.folder, config.Name, cloneSpec)
 	if err != nil {
 		return nil, err
 	}
@@ -254,8 +292,8 @@ func (template *VirtualMachine) Clone(ctx context.Context, config *CloneConfig) 
 	}
 
 	vmRef := info.Result.(types.ManagedObjectReference)
-	vm := template.driver.NewVM(&vmRef)
-	return vm, nil
+	created := vm.driver.NewVM(&vmRef)
+	return created, nil
 }
 
 func (vm *VirtualMachine) Destroy() error {
@@ -270,11 +308,14 @@ func (vm *VirtualMachine) Destroy() error {
 func (vm *VirtualMachine) Configure(config *HardwareConfig) error {
 	var confSpec types.VirtualMachineConfigSpec
 	confSpec.NumCPUs = config.CPUs
+	confSpec.NumCoresPerSocket = config.CpuCores
 	confSpec.MemoryMB = config.RAM
 
 	var cpuSpec types.ResourceAllocationInfo
 	cpuSpec.Reservation = &config.CPUReservation
-	cpuSpec.Limit = &config.CPULimit
+	if config.CPULimit != 0 {
+		cpuSpec.Limit = &config.CPULimit
+	}
 	confSpec.CpuAllocation = &cpuSpec
 
 	var ramSpec types.ResourceAllocationInfo
@@ -286,6 +327,26 @@ func (vm *VirtualMachine) Configure(config *HardwareConfig) error {
 
 	confSpec.CpuHotAddEnabled = &config.CpuHotAddEnabled
 	confSpec.MemoryHotAddEnabled = &config.MemoryHotAddEnabled
+
+	if config.VideoRAM != 0 {
+		devices, err := vm.vm.Device(vm.driver.ctx)
+		if err != nil {
+			return err
+		}
+		l := devices.SelectByType((*types.VirtualMachineVideoCard)(nil))
+		if len(l) != 1 {
+			return err
+		}
+		card := l[0].(*types.VirtualMachineVideoCard)
+
+		card.VideoRamSizeInKB = config.VideoRAM
+
+		spec := &types.VirtualDeviceConfigSpec{
+			Device:    card,
+			Operation: types.VirtualDeviceConfigSpecOperationEdit,
+		}
+		confSpec.DeviceChange = append(confSpec.DeviceChange, spec)
+	}
 
 	task, err := vm.vm.Reconfigure(vm.driver.ctx, confSpec)
 	if err != nil {
@@ -488,82 +549,79 @@ func addDisks(_ *Driver, devices object.VirtualDeviceList, config *CreateConfig)
 }
 
 func addNetworks(d *Driver, devices object.VirtualDeviceList, config *CreateConfig) (object.VirtualDeviceList, error) {
-  for _, networkName := range config.Networks {
-		network, err := d.finder.NetworkOrDefault(d.ctx, networkName)
+	var network object.NetworkReference
+	if config.Networks == "" {
+		h, err := d.FindHost(config.Host)
 		if err != nil {
 			return nil, err
 		}
 
-		backing, err := network.EthernetCardBackingInfo(d.ctx)
+		i, err := h.Info("network")
 		if err != nil {
 			return nil, err
 		}
 
-		device, err := object.EthernetCardTypes().CreateEthernetCard(config.NetworkCard, backing)
-		if err != nil {
-			return nil, err
+		if len(i.Network) > 1 {
+			return nil, fmt.Errorf("Host has multiple networks. Specify it explicitly")
 		}
 
-		devices = append(devices, device)
-	}
-
+		network = object.NewNetwork(d.client.Client, i.Network[0])
+	} else {
+		var err error
+		for _, networkName := range config.Networks {
+	
+			network, err := d.finder.Network(d.ctx, networkName)
+			if err != nil {
+				return nil, err
+			}
+		
+			backing, err := network.EthernetCardBackingInfo(d.ctx)
+			if err != nil {
+				return nil, err
+			}
+		
+			device, err := object.EthernetCardTypes().CreateEthernetCard(config.NetworkCard, backing)
+			if err != nil {
+				return nil, err
+			}
+		
+			devices = append(devices, device)
+		}
+	
 	return devices, nil
 }
 
-func appendNetworks(template *VirtualMachine, devices object.VirtualDeviceList, config *CloneConfig) (object.VirtualDeviceList, error) {
-  for _, networkName := range config.Networks {
-		network, err := template.finder.NetworkOrDefault(template.ctx, networkName)
-		if err != nil {
-			return nil, err
-		}
-
-		backing, err := network.EthernetCardBackingInfo(d.ctx)
-		if err != nil {
-			return nil, err
-		}
-
-		device, err := object.EthernetCardTypes().CreateEthernetCard(config.NetworkCard, backing)
-		if err != nil {
-			return nil, err
-		}
-
-		devices = append(devices, device)
-	}
-
-	return devices, nil
-}
-
-func addIDE(devices object.VirtualDeviceList) (object.VirtualDeviceList, error) {
-	ideDevice, err := devices.CreateIDEController()
-	if err != nil {
-		return nil, err
-	}
-	devices = append(devices, ideDevice)
-
-	return devices, nil
-}
-
-func (vm *VirtualMachine) AddCdrom(isoPath string) error {
+func (vm *VirtualMachine) AddCdrom(controllerType string, isoPath string) error {
 	devices, err := vm.vm.Device(vm.driver.ctx)
 	if err != nil {
 		return err
 	}
-	// sata, err := vm.FindSATAController()
-	ide, err := devices.FindIDEController("")
-	if err != nil {
-		return err
+
+	var controller *types.VirtualController
+	if controllerType == "sata" {
+		c, err := vm.FindSATAController()
+		if err != nil {
+			return err
+		}
+		controller = c.GetVirtualController()
+	} else {
+		c, err := devices.FindIDEController("")
+		if err != nil {
+			return err
+		}
+		controller = c.GetVirtualController()
 	}
 
-	// cdrom, err := vm.CreateCdrom(sata)
-	cdrom, err := devices.CreateCdrom(ide)
+	cdrom, err := vm.CreateCdrom(controller)
 	if err != nil {
 		return err
 	}
 
 	if isoPath != "" {
-		cdrom = devices.InsertIso(cdrom, isoPath)
+		devices.InsertIso(cdrom, isoPath)
 	}
 
+	log.Printf("Creating CD-ROM on controller '%v' with iso '%v'", controller, isoPath)
 	return vm.addDevice(cdrom)
 }
 
@@ -640,4 +698,13 @@ func (vm *VirtualMachine) AddConfigParams(params map[string]string) error {
 
 	_, err = task.WaitForResult(vm.driver.ctx, nil)
 	return err
+}
+
+func findNetworkAdapter(l object.VirtualDeviceList) (types.BaseVirtualEthernetCard, error) {
+	c := l.SelectByType((*types.VirtualEthernetCard)(nil))
+	if len(c) == 0 {
+		return nil, errors.New("no network adapter device found")
+	}
+
+	return c[0].(types.BaseVirtualEthernetCard), nil
 }

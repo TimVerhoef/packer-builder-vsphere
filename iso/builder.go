@@ -1,12 +1,13 @@
 package iso
 
 import (
+	"context"
 	packerCommon "github.com/hashicorp/packer/common"
+	"github.com/hashicorp/packer/helper/communicator"
+	"github.com/hashicorp/packer/helper/multistep"
 	"github.com/hashicorp/packer/packer"
 	"github.com/jetbrains-infra/packer-builder-vsphere/common"
 	"github.com/jetbrains-infra/packer-builder-vsphere/driver"
-	"github.com/hashicorp/packer/helper/multistep"
-	"github.com/hashicorp/packer/helper/communicator"
 )
 
 type Builder struct {
@@ -24,7 +25,7 @@ func (b *Builder) Prepare(raws ...interface{}) ([]string, error) {
 	return warnings, nil
 }
 
-func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packer.Artifact, error) {
+func (b *Builder) Run(ctx context.Context, ui packer.Ui, hook packer.Hook) (packer.Artifact, error) {
 	state := new(multistep.BasicStateBag)
 	state.Put("comm", &b.config.Comm)
 	state.Put("hook", hook)
@@ -36,12 +37,37 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 		&common.StepConnect{
 			Config: &b.config.ConnectConfig,
 		},
+	)
+
+	if b.config.ISOUrls != nil {
+		steps = append(steps,
+			&packerCommon.StepDownload{
+				Checksum:     b.config.ISOChecksum,
+				ChecksumType: b.config.ISOChecksumType,
+				Description:  "ISO",
+				Extension:    b.config.TargetExtension,
+				ResultKey:    "iso_path",
+				TargetPath:   b.config.TargetPath,
+				Url:          b.config.ISOUrls,
+			},
+			&StepRemoteUpload{
+				Datastore: b.config.Datastore,
+				Host:      b.config.Host,
+			},
+		)
+	}
+
+	steps = append(steps,
 		&StepCreateVM{
 			Config:   &b.config.CreateConfig,
 			Location: &b.config.LocationConfig,
+			Force:    b.config.PackerConfig.PackerForce,
 		},
 		&common.StepConfigureHardware{
 			Config: &b.config.HardwareConfig,
+		},
+		&StepAddCDRom{
+			Config: &b.config.CDRomConfig,
 		},
 		&common.StepConfigParams{
 			Config: &b.config.ConfigParamsConfig,
@@ -50,9 +76,6 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 
 	if b.config.Comm.Type != "none" {
 		steps = append(steps,
-			&StepAddCDRom{
-				Config: &b.config.CDRomConfig,
-			},
 			&packerCommon.StepCreateFloppy{
 				Files:       b.config.FloppyFiles,
 				Directories: b.config.FloppyDirectories,
@@ -68,22 +91,26 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 				HTTPPortMax: b.config.HTTPPortMax,
 			},
 			&common.StepRun{
-				Config: &b.config.RunConfig,
+				Config:   &b.config.RunConfig,
+				SetOrder: true,
 			},
 			&StepBootCommand{
 				Config: &b.config.BootConfig,
+				Ctx:    b.config.ctx,
+				VMName: b.config.VMName,
 			},
-			&common.StepWaitForIp{},
+			&common.StepWaitForIp{
+				Config: &b.config.WaitIpConfig,
+			},
 			&communicator.StepConnect{
 				Config:    &b.config.Comm,
-				Host:      common.CommHost,
-				SSHConfig: common.SshConfig,
+				Host:      common.CommHost(b.config.Comm.SSHHost),
+				SSHConfig: b.config.Comm.SSHConfigFunc(),
 			},
 			&packerCommon.StepProvision{},
 			&common.StepShutdown{
 				Config: &b.config.ShutdownConfig,
 			},
-			&StepRemoveCDRom{},
 			&StepRemoveFloppy{
 				Datastore: b.config.Datastore,
 				Host:      b.config.Host,
@@ -92,6 +119,7 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 	}
 
 	steps = append(steps,
+		&StepRemoveCDRom{},
 		&common.StepCreateSnapshot{
 			CreateSnapshot: b.config.CreateSnapshot,
 		},
@@ -101,7 +129,7 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 	)
 
 	b.runner = packerCommon.NewRunner(steps, b.config.PackerConfig, ui)
-	b.runner.Run(state)
+	b.runner.Run(ctx, state)
 
 	if rawErr, ok := state.GetOk("error"); ok {
 		return nil, rawErr.(error)
@@ -115,10 +143,4 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 		VM:   state.Get("vm").(*driver.VirtualMachine),
 	}
 	return artifact, nil
-}
-
-func (b *Builder) Cancel() {
-	if b.runner != nil {
-		b.runner.Cancel()
-	}
 }

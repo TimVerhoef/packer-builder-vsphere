@@ -2,11 +2,12 @@ package clone
 
 import (
 	builderT "github.com/hashicorp/packer/helper/builder/testing"
-	commonT "github.com/jetbrains-infra/packer-builder-vsphere/common/testing"
-
 	"github.com/hashicorp/packer/packer"
-	"testing"
 	"github.com/jetbrains-infra/packer-builder-vsphere/common"
+	commonT "github.com/jetbrains-infra/packer-builder-vsphere/common/testing"
+	"github.com/vmware/govmomi/vim25/types"
+	"os"
+	"testing"
 )
 
 func TestCloneBuilderAcc_default(t *testing.T) {
@@ -19,10 +20,19 @@ func TestCloneBuilderAcc_default(t *testing.T) {
 }
 
 func defaultConfig() map[string]interface{} {
+	username := os.Getenv("VSPHERE_USERNAME")
+	if username == "" {
+		username = "root"
+	}
+	password := os.Getenv("VSPHERE_PASSWORD")
+	if password == "" {
+		password = "jetbrains"
+	}
+
 	config := map[string]interface{}{
 		"vcenter_server":      "vcenter.vsphere65.test",
-		"username":            "root",
-		"password":            "jetbrains",
+		"username":            username,
+		"password":            password,
 		"insecure_connection": true,
 
 		"template": "alpine",
@@ -312,6 +322,51 @@ func checkLinkedClone(t *testing.T) builderT.TestCheckFunc {
 	}
 }
 
+func TestCloneBuilderAcc_network(t *testing.T) {
+	builderT.Test(t, builderT.TestCase{
+		Builder:  &Builder{},
+		Template: networkConfig(),
+		Check:    checkNetwork(t, "VM Network 2"),
+	})
+}
+
+func networkConfig() string {
+	config := defaultConfig()
+	config["template"] = "alpine-host4"
+	config["host"] = "esxi-4.vsphere65.test"
+	config["datastore"] = "datastore4"
+	config["network"] = "VM Network 2"
+	return commonT.RenderConfig(config)
+}
+
+func checkNetwork(t *testing.T, name string) builderT.TestCheckFunc {
+	return func(artifacts []packer.Artifact) error {
+		d := commonT.TestConn(t)
+		vm := commonT.GetVM(t, d, artifacts)
+
+		vmInfo, err := vm.Info("network")
+		if err != nil {
+			t.Fatalf("Cannot read VM properties: %v", err)
+		}
+
+		n := len(vmInfo.Network)
+		if n != 1 {
+			t.Fatalf("VM should have 1 network, got %v", n)
+		}
+
+		ds := d.NewNetwork(&vmInfo.Network[0])
+		info, err := ds.Info("name")
+		if err != nil {
+			t.Fatalf("Cannot read network properties: %v", err)
+		}
+		if info.Name != name {
+			t.Errorf("Wrong network. expected: %v, got: %v", name, info.Name)
+		}
+
+		return nil
+	}
+}
+
 func TestCloneBuilderAcc_hardware(t *testing.T) {
 	builderT.Test(t, builderT.TestCase{
 		Builder:  &Builder{},
@@ -323,12 +378,14 @@ func TestCloneBuilderAcc_hardware(t *testing.T) {
 func hardwareConfig() string {
 	config := defaultConfig()
 	config["CPUs"] = 2
+	config["cpu_cores"] = 2
 	config["CPU_reservation"] = 1000
 	config["CPU_limit"] = 1500
 	config["RAM"] = 2048
 	config["RAM_reservation"] = 1024
 	config["CPU_hot_plug"] = true
 	config["RAM_hot_plug"] = true
+	config["video_ram"] = 8192
 
 	return commonT.RenderConfig(config)
 }
@@ -346,6 +403,11 @@ func checkHardware(t *testing.T) builderT.TestCheckFunc {
 		cpuSockets := vmInfo.Config.Hardware.NumCPU
 		if cpuSockets != 2 {
 			t.Errorf("VM should have 2 CPU sockets, got %v", cpuSockets)
+		}
+
+		cpuCores := vmInfo.Config.Hardware.NumCoresPerSocket
+		if cpuCores != 2 {
+			t.Errorf("VM should have 2 CPU cores per socket, got %v", cpuCores)
 		}
 
 		cpuReservation := *vmInfo.Config.CpuAllocation.Reservation
@@ -376,6 +438,18 @@ func checkHardware(t *testing.T) builderT.TestCheckFunc {
 		memoryHotAdd := vmInfo.Config.MemoryHotAddEnabled
 		if !*memoryHotAdd {
 			t.Errorf("VM should have Memory hot add enabled, got %v", memoryHotAdd)
+		}
+
+		l, err := vm.Devices()
+		if err != nil {
+			t.Fatalf("Cannot read VM devices: %v", err)
+		}
+		v := l.SelectByType((*types.VirtualMachineVideoCard)(nil))
+		if len(v) != 1 {
+			t.Errorf("VM should have one video card")
+		}
+		if v[0].(*types.VirtualMachineVideoCard).VideoRamSizeInKB != 8192 {
+			t.Errorf("Video RAM should be equal 8192")
 		}
 
 		return nil
@@ -419,6 +493,7 @@ func TestCloneBuilderAcc_sshPassword(t *testing.T) {
 	builderT.Test(t, builderT.TestCase{
 		Builder:  &Builder{},
 		Template: sshPasswordConfig(),
+		Check:    checkDefaultBootOrder(t),
 	})
 }
 
@@ -428,6 +503,25 @@ func sshPasswordConfig() string {
 	config["ssh_username"] = "root"
 	config["ssh_password"] = "jetbrains"
 	return commonT.RenderConfig(config)
+}
+
+func checkDefaultBootOrder(t *testing.T) builderT.TestCheckFunc {
+	return func(artifacts []packer.Artifact) error {
+		d := commonT.TestConn(t)
+		vm := commonT.GetVM(t, d, artifacts)
+
+		vmInfo, err := vm.Info("config.bootOptions")
+		if err != nil {
+			t.Fatalf("Cannot read VM properties: %v", err)
+		}
+
+		order := vmInfo.Config.BootOptions.BootOrder
+		if order != nil {
+			t.Errorf("Boot order must be empty")
+		}
+
+		return nil
+	}
 }
 
 func TestCloneBuilderAcc_sshKey(t *testing.T) {
@@ -509,4 +603,114 @@ func checkTemplate(t *testing.T) builderT.TestCheckFunc {
 
 		return nil
 	}
+}
+
+func TestCloneBuilderAcc_bootOrder(t *testing.T) {
+	builderT.Test(t, builderT.TestCase{
+		Builder:  &Builder{},
+		Template: bootOrderConfig(),
+		Check:    checkBootOrder(t),
+	})
+}
+
+func bootOrderConfig() string {
+	config := defaultConfig()
+	config["communicator"] = "ssh"
+	config["ssh_username"] = "root"
+	config["ssh_password"] = "jetbrains"
+
+	config["boot_order"] = "disk,cdrom,floppy"
+
+	return commonT.RenderConfig(config)
+}
+
+func checkBootOrder(t *testing.T) builderT.TestCheckFunc {
+	return func(artifacts []packer.Artifact) error {
+		d := commonT.TestConn(t)
+		vm := commonT.GetVM(t, d, artifacts)
+
+		vmInfo, err := vm.Info("config.bootOptions")
+		if err != nil {
+			t.Fatalf("Cannot read VM properties: %v", err)
+		}
+
+		order := vmInfo.Config.BootOptions.BootOrder
+		if order == nil {
+			t.Errorf("Boot order must not be empty")
+		}
+
+		return nil
+	}
+}
+
+func TestCloneBuilderAcc_notes(t *testing.T) {
+	builderT.Test(t, builderT.TestCase{
+		Builder:  &Builder{},
+		Template: notesConfig(),
+		Check:    checkNotes(t),
+	})
+}
+
+func notesConfig() string {
+	config := defaultConfig()
+	config["notes"] = "test"
+
+	return commonT.RenderConfig(config)
+}
+
+func checkNotes(t *testing.T) builderT.TestCheckFunc {
+	return func(artifacts []packer.Artifact) error {
+		d := commonT.TestConn(t)
+		vm := commonT.GetVM(t, d, artifacts)
+
+		vmInfo, err := vm.Info("config.annotation")
+		if err != nil {
+			t.Fatalf("Cannot read VM properties: %v", err)
+		}
+
+		notes := vmInfo.Config.Annotation
+		if notes != "test" {
+			t.Errorf("notest should be 'test'")
+		}
+
+		return nil
+	}
+}
+
+func TestCloneBuilderAcc_windows(t *testing.T) {
+	t.Skip("test is too slow")
+	config := windowsConfig()
+	builderT.Test(t, builderT.TestCase{
+		Builder:  &Builder{},
+		Template: commonT.RenderConfig(config),
+	})
+}
+
+func windowsConfig() map[string]interface{} {
+	username := os.Getenv("VSPHERE_USERNAME")
+	if username == "" {
+		username = "root"
+	}
+	password := os.Getenv("VSPHERE_PASSWORD")
+	if password == "" {
+		password = "jetbrains"
+	}
+
+	config := map[string]interface{}{
+		"vcenter_server":      "vcenter.vsphere65.test",
+		"username":            username,
+		"password":            password,
+		"insecure_connection": true,
+
+		"vm_name":      commonT.NewVMName(),
+		"template":     "windows",
+		"host":         "esxi-1.vsphere65.test",
+		"linked_clone": true, // speed up
+
+		"communicator":   "winrm",
+		"winrm_username": "jetbrains",
+		"winrm_password": "jetbrains",
+	}
+
+	return config
 }

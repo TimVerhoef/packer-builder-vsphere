@@ -1,13 +1,14 @@
 package iso
 
 import (
-	builderT "github.com/hashicorp/packer/helper/builder/testing"
-	commonT "github.com/jetbrains-infra/packer-builder-vsphere/common/testing"
-	"testing"
-	"github.com/hashicorp/packer/packer"
-	"github.com/vmware/govmomi/vim25/types"
 	"fmt"
+	builderT "github.com/hashicorp/packer/helper/builder/testing"
+	"github.com/hashicorp/packer/packer"
+	commonT "github.com/jetbrains-infra/packer-builder-vsphere/common/testing"
+	"github.com/vmware/govmomi/vim25/types"
 	"io/ioutil"
+	"os"
+	"testing"
 )
 
 func TestISOBuilderAcc_default(t *testing.T) {
@@ -20,10 +21,19 @@ func TestISOBuilderAcc_default(t *testing.T) {
 }
 
 func defaultConfig() map[string]interface{} {
+	username := os.Getenv("VSPHERE_USERNAME")
+	if username == "" {
+		username = "root"
+	}
+	password := os.Getenv("VSPHERE_PASSWORD")
+	if password == "" {
+		password = "jetbrains"
+	}
+
 	config := map[string]interface{}{
 		"vcenter_server":      "vcenter.vsphere65.test",
-		"username":            "root",
-		"password":            "jetbrains",
+		"username":            username,
+		"password":            password,
 		"insecure_connection": true,
 
 		"host": "esxi-1.vsphere65.test",
@@ -45,7 +55,7 @@ func checkDefault(t *testing.T, name string, host string, datastore string) buil
 		d := commonT.TestConn(t)
 		vm := commonT.GetVM(t, d, artifacts)
 
-		vmInfo, err := vm.Info("name", "parent", "runtime.host", "resourcePool", "datastore", "layoutEx.disk")
+		vmInfo, err := vm.Info("name", "parent", "runtime.host", "resourcePool", "datastore", "layoutEx.disk", "config.firmware")
 		if err != nil {
 			t.Fatalf("Cannot read VM properties: %v", err)
 		}
@@ -91,6 +101,45 @@ func checkDefault(t *testing.T, name string, host string, datastore string) buil
 			t.Errorf("Invalid datastore name: expected '%v', got '%v'", datastore, dsInfo.Name)
 		}
 
+		fw := vmInfo.Config.Firmware
+		if fw != "bios" {
+			t.Errorf("Invalid firmware: expected 'bios', got '%v'", fw)
+		}
+
+		return nil
+	}
+}
+
+func TestISOBuilderAcc_notes(t *testing.T) {
+	builderT.Test(t, builderT.TestCase{
+		Builder:  &Builder{},
+		Template: notesConfig(),
+		Check:    checkNotes(t),
+	})
+}
+
+func notesConfig() string {
+	config := defaultConfig()
+	config["notes"] = "test"
+
+	return commonT.RenderConfig(config)
+}
+
+func checkNotes(t *testing.T) builderT.TestCheckFunc {
+	return func(artifacts []packer.Artifact) error {
+		d := commonT.TestConn(t)
+		vm := commonT.GetVM(t, d, artifacts)
+
+		vmInfo, err := vm.Info("config.annotation")
+		if err != nil {
+			t.Fatalf("Cannot read VM properties: %v", err)
+		}
+
+		notes := vmInfo.Config.Annotation
+		if notes != "test" {
+			t.Errorf("notes should be 'test'")
+		}
+
 		return nil
 	}
 }
@@ -106,11 +155,14 @@ func TestISOBuilderAcc_hardware(t *testing.T) {
 func hardwareConfig() string {
 	config := defaultConfig()
 	config["CPUs"] = 2
+	config["cpu_cores"] = 2
 	config["CPU_reservation"] = 1000
 	config["CPU_limit"] = 1500
 	config["RAM"] = 2048
 	config["RAM_reservation"] = 1024
 	config["NestedHV"] = true
+	config["firmware"] = "efi"
+	config["video_ram"] = 8192
 
 	return commonT.RenderConfig(config)
 }
@@ -128,6 +180,11 @@ func checkHardware(t *testing.T) builderT.TestCheckFunc {
 		cpuSockets := vmInfo.Config.Hardware.NumCPU
 		if cpuSockets != 2 {
 			t.Errorf("VM should have 2 CPU sockets, got %v", cpuSockets)
+		}
+
+		cpuCores := vmInfo.Config.Hardware.NumCoresPerSocket
+		if cpuCores != 2 {
+			t.Errorf("VM should have 2 CPU cores per socket, got %v", cpuCores)
 		}
 
 		cpuReservation := *vmInfo.Config.CpuAllocation.Reservation
@@ -153,6 +210,101 @@ func checkHardware(t *testing.T) builderT.TestCheckFunc {
 		nestedHV := vmInfo.Config.NestedHVEnabled
 		if !*nestedHV {
 			t.Errorf("VM should have NestedHV enabled, got %v", nestedHV)
+		}
+
+		fw := vmInfo.Config.Firmware
+		if fw != "efi" {
+			t.Errorf("Invalid firmware: expected 'efi', got '%v'", fw)
+		}
+
+		l, err := vm.Devices()
+		if err != nil {
+			t.Fatalf("Cannot read VM devices: %v", err)
+		}
+		c := l.PickController((*types.VirtualIDEController)(nil))
+		if c == nil {
+			t.Errorf("VM should have IDE controller")
+		}
+		s := l.PickController((*types.VirtualAHCIController)(nil))
+		if s != nil {
+			t.Errorf("VM should have no SATA controllers")
+		}
+
+		v := l.SelectByType((*types.VirtualMachineVideoCard)(nil))
+		if len(v) != 1 {
+			t.Errorf("VM should have one video card")
+		}
+		if v[0].(*types.VirtualMachineVideoCard).VideoRamSizeInKB != 8192 {
+			t.Errorf("Video RAM should be equal 8192")
+		}
+
+		return nil
+	}
+}
+
+func TestISOBuilderAcc_limit(t *testing.T) {
+	builderT.Test(t, builderT.TestCase{
+		Builder:  &Builder{},
+		Template: limitConfig(),
+		Check:    checkLimit(t),
+	})
+}
+
+func limitConfig() string {
+	config := defaultConfig()
+	config["CPUs"] = 1 // hardware is customized, but CPU limit is not specified explicitly
+
+	return commonT.RenderConfig(config)
+}
+
+func checkLimit(t *testing.T) builderT.TestCheckFunc {
+	return func(artifacts []packer.Artifact) error {
+		d := commonT.TestConn(t)
+
+		vm := commonT.GetVM(t, d, artifacts)
+		vmInfo, err := vm.Info("config.cpuAllocation")
+		if err != nil {
+			t.Fatalf("Cannot read VM properties: %v", err)
+		}
+
+		limit := *vmInfo.Config.CpuAllocation.Limit
+		if limit != -1 { // must be unlimited
+			t.Errorf("Invalid CPU limit: expected '%v', got '%v'", -1, limit)
+		}
+
+		return nil
+	}
+}
+
+func TestISOBuilderAcc_sata(t *testing.T) {
+	builderT.Test(t, builderT.TestCase{
+		Builder:  &Builder{},
+		Template: sataConfig(),
+		Check:    checkSata(t),
+	})
+}
+
+func sataConfig() string {
+	config := defaultConfig()
+	config["cdrom_type"] = "sata"
+
+	return commonT.RenderConfig(config)
+}
+
+func checkSata(t *testing.T) builderT.TestCheckFunc {
+	return func(artifacts []packer.Artifact) error {
+		d := commonT.TestConn(t)
+
+		vm := commonT.GetVM(t, d, artifacts)
+
+		l, err := vm.Devices()
+		if err != nil {
+			t.Fatalf("Cannot read VM devices: %v", err)
+		}
+
+		c := l.PickController((*types.VirtualAHCIController)(nil))
+		if c == nil {
+			t.Errorf("VM has no SATA controllers")
 		}
 
 		return nil
@@ -217,10 +369,16 @@ func checkNetworkCard(t *testing.T) builderT.TestCheckFunc {
 func TestISOBuilderAcc_createFloppy(t *testing.T) {
 	tmpFile, err := ioutil.TempFile("", "packer-vsphere-iso-test")
 	if err != nil {
-		t.Fatalf("Error creating temp file ")
+		t.Fatalf("Error creating temp file: %v", err)
 	}
-	fmt.Fprint(tmpFile, "Hello, World!")
-	tmpFile.Close()
+	_, err = fmt.Fprint(tmpFile, "Hello, World!")
+	if err != nil {
+		t.Fatalf("Error creating temp file: %v", err)
+	}
+	err = tmpFile.Close()
+	if err != nil {
+		t.Fatalf("Error creating temp file: %v", err)
+	}
 
 	builderT.Test(t, builderT.TestCase{
 		Builder:  &Builder{},
@@ -231,5 +389,167 @@ func TestISOBuilderAcc_createFloppy(t *testing.T) {
 func createFloppyConfig(filePath string) string {
 	config := defaultConfig()
 	config["floppy_files"] = []string{filePath}
+	return commonT.RenderConfig(config)
+}
+
+func TestISOBuilderAcc_full(t *testing.T) {
+	config := fullConfig()
+	builderT.Test(t, builderT.TestCase{
+		Builder:  &Builder{},
+		Template: commonT.RenderConfig(config),
+		Check:    checkFull(t),
+	})
+}
+
+func fullConfig() map[string]interface{} {
+	username := os.Getenv("VSPHERE_USERNAME")
+	if username == "" {
+		username = "root"
+	}
+	password := os.Getenv("VSPHERE_PASSWORD")
+	if password == "" {
+		password = "jetbrains"
+	}
+
+	config := map[string]interface{}{
+		"vcenter_server":      "vcenter.vsphere65.test",
+		"username":            username,
+		"password":            password,
+		"insecure_connection": true,
+
+		"vm_name": commonT.NewVMName(),
+		"host":    "esxi-1.vsphere65.test",
+
+		"RAM":                   512,
+		"disk_controller_type":  "pvscsi",
+		"disk_size":             1024,
+		"disk_thin_provisioned": true,
+		"network_card":          "vmxnet3",
+		"guest_os_type":         "other3xLinux64Guest",
+
+		"iso_paths": []string{
+			"[datastore1] ISO/alpine-standard-3.8.2-x86_64.iso",
+		},
+		"floppy_files": []string{
+			"../examples/alpine/answerfile",
+			"../examples/alpine/setup.sh",
+		},
+
+		"boot_wait": "20s",
+		"boot_command": []string{
+			"root<enter><wait>",
+			"mount -t vfat /dev/fd0 /media/floppy<enter><wait>",
+			"setup-alpine -f /media/floppy/answerfile<enter>",
+			"<wait5>",
+			"jetbrains<enter>",
+			"jetbrains<enter>",
+			"<wait5>",
+			"y<enter>",
+			"<wait10><wait10><wait10><wait10>",
+			"reboot<enter>",
+			"<wait10><wait10><wait10>",
+			"root<enter>",
+			"jetbrains<enter><wait>",
+			"mount -t vfat /dev/fd0 /media/floppy<enter><wait>",
+			"/media/floppy/SETUP.SH<enter>",
+		},
+
+		"ssh_username": "root",
+		"ssh_password": "jetbrains",
+	}
+
+	return config
+}
+
+func checkFull(t *testing.T) builderT.TestCheckFunc {
+	return func(artifacts []packer.Artifact) error {
+		d := commonT.TestConn(t)
+		vm := commonT.GetVM(t, d, artifacts)
+
+		vmInfo, err := vm.Info("config.bootOptions")
+		if err != nil {
+			t.Fatalf("Cannot read VM properties: %v", err)
+		}
+
+		order := vmInfo.Config.BootOptions.BootOrder
+		if order != nil {
+			t.Errorf("Boot order must be empty")
+		}
+
+		devices, err := vm.Devices()
+		if err != nil {
+			t.Fatalf("Cannot read devices: %v", err)
+		}
+		cdroms := devices.SelectByType((*types.VirtualCdrom)(nil))
+		for _, cd := range cdroms {
+			_, ok := cd.(*types.VirtualCdrom).Backing.(*types.VirtualCdromRemotePassthroughBackingInfo)
+			if !ok {
+				t.Errorf("wrong cdrom backing")
+			}
+		}
+
+		return nil
+	}
+}
+
+func TestISOBuilderAcc_bootOrder(t *testing.T) {
+	config := fullConfig()
+	config["boot_order"] = "disk,cdrom,floppy"
+
+	builderT.Test(t, builderT.TestCase{
+		Builder:  &Builder{},
+		Template: commonT.RenderConfig(config),
+		Check:    checkBootOrder(t),
+	})
+}
+
+func checkBootOrder(t *testing.T) builderT.TestCheckFunc {
+	return func(artifacts []packer.Artifact) error {
+		d := commonT.TestConn(t)
+		vm := commonT.GetVM(t, d, artifacts)
+
+		vmInfo, err := vm.Info("config.bootOptions")
+		if err != nil {
+			t.Fatalf("Cannot read VM properties: %v", err)
+		}
+
+		order := vmInfo.Config.BootOptions.BootOrder
+		if order == nil {
+			t.Errorf("Boot order must not be empty")
+		}
+
+		return nil
+	}
+}
+
+func TestISOBuilderAcc_cluster(t *testing.T) {
+	builderT.Test(t, builderT.TestCase{
+		Builder:  &Builder{},
+		Template: clusterConfig(),
+	})
+}
+
+func clusterConfig() string {
+	config := defaultConfig()
+	config["cluster"] = "cluster1"
+	config["host"] = "esxi-2.vsphere65.test"
+
+	return commonT.RenderConfig(config)
+}
+
+func TestISOBuilderAcc_clusterDRS(t *testing.T) {
+	builderT.Test(t, builderT.TestCase{
+		Builder:  &Builder{},
+		Template: clusterDRSConfig(),
+	})
+}
+
+func clusterDRSConfig() string {
+	config := defaultConfig()
+	config["cluster"] = "cluster2"
+	config["host"] = ""
+	config["datastore"] = "datastore3" // bug #183
+	config["network"] = "VM Network"   // bug #183
+
 	return commonT.RenderConfig(config)
 }

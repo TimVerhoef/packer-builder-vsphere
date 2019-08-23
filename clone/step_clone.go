@@ -3,7 +3,6 @@ package clone
 import (
 	"context"
 	"fmt"
-
 	"github.com/hashicorp/packer/helper/multistep"
 	"github.com/hashicorp/packer/packer"
 	"github.com/jetbrains-infra/packer-builder-vsphere/common"
@@ -11,11 +10,12 @@ import (
 )
 
 type CloneConfig struct {
-	DiskSize    int64    `mapstructure:"disk_size"`
-	LinkedClone bool     `mapstructure:"linked_clone"`
-	NetworkCard string   `mapstructure:"network_card"`
-	Networks    []string `mapstructure:"networks"`
-	Template    string   `mapstructure:"template"`
+	DiskSize      int64    `mapstructure:"disk_size"`
+	LinkedClone   bool     `mapstructure:"linked_clone"`
+	NetworkCard   string   `mapstructure:"network_card"`
+	Networks      []string `mapstructure:"networks"`
+	Notes         string   `mapstructure:"notes"`
+	Template      string   `mapstructure:"template"`
 }
 
 func (c *CloneConfig) Prepare() []error {
@@ -35,21 +35,34 @@ func (c *CloneConfig) Prepare() []error {
 type StepCloneVM struct {
 	Config   *CloneConfig
 	Location *common.LocationConfig
+	Force    bool
 }
 
 func (s *StepCloneVM) Run(ctx context.Context, state multistep.StateBag) multistep.StepAction {
 	ui := state.Get("ui").(packer.Ui)
 	d := state.Get("driver").(*driver.Driver)
 
-	ui.Say("Cloning VM...")
+	vm, err := d.FindVM(s.Location.VMName)
 
+	if s.Force == false && err == nil {
+		state.Put("error", fmt.Errorf("%s already exists, you can use -force flag to destroy it", s.Location.VMName))
+		return multistep.ActionHalt
+	} else if s.Force == true && err == nil {
+		ui.Say(fmt.Sprintf("the vm/template %s already exists, but deleting it due to -force flag", s.Location.VMName))
+		err := vm.Destroy()
+		if err != nil {
+			state.Put("error", fmt.Errorf("error destroying %s: %v", s.Location.VMName, err))
+		}
+	}
+
+	ui.Say("Cloning VM...")
 	template, err := d.FindVM(s.Config.Template)
 	if err != nil {
 		state.Put("error", err)
 		return multistep.ActionHalt
 	}
 
-	vm, err := template.Clone(ctx, &driver.CloneConfig{
+	vm, err = template.Clone(ctx, &driver.CloneConfig{
 		Cluster:      s.Location.Cluster,
 		Datastore:    s.Location.Datastore,
 		Folder:       s.Location.Folder,
@@ -57,8 +70,9 @@ func (s *StepCloneVM) Run(ctx context.Context, state multistep.StateBag) multist
 		Name:         s.Location.VMName,
 		ResourcePool: s.Location.ResourcePool,
 		LinkedClone:  s.Config.LinkedClone,
-    Networks:     s.Config.Networks,
-    NetworkCard:  s.Config.NetworkCard,
+		NetworkCard:  s.Config.NetworkCard,
+		Networks:     s.Config.Networks,
+		Annotation:   s.Config.Notes,
 	})
 	if err != nil {
 		state.Put("error", err)

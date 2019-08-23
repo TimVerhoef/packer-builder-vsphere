@@ -3,10 +3,6 @@ package iso
 import (
 	"context"
 	"fmt"
-	"net"
-	"os"
-
-	packerCommon "github.com/hashicorp/packer/common"
 	"github.com/hashicorp/packer/helper/multistep"
 	"github.com/hashicorp/packer/packer"
 	"github.com/jetbrains-infra/packer-builder-vsphere/common"
@@ -14,37 +10,18 @@ import (
 )
 
 type CreateConfig struct {
-	Version     uint   `mapstructure:"vm_version"`
+	Firmware    string `mapstructure:"firmware"`
 	GuestOSType string `mapstructure:"guest_os_type"`
+	Notes       string `mapstructure:"notes"`
+	Version     uint   `mapstructure:"vm_version"` 
 
-	DiskControllerType string              `mapstructure:"disk_controller_type"`
-	GlobalDiskType     string              `mapstructure:"disk_type"`
-	HTTPIP             string              `mapstructure:"http_ip"`
-	NetworkCard        string              `mapstructure:"network_card"`
-	Networks           []string            `mapstructure:"networks"`
-	Storage            []driver.DiskConfig `mapstructure:"storage"`
-	USBController      bool                `mapstructure:"usb_controller"`
-}
+	DiskControllerType string   `mapstructure:"disk_controller_type"`
+	GlobalDiskType     string   `mapstructure:"disk_type"`
+	NetworkCard        string   `mapstructure:"network_card"`
+	Networks           []string `mapstructure:"networks"`
+	USBController      bool     `mapstructure:"usb_controller"`
 
-func getHostIP(s string) string {
-	if net.ParseIP(s) != nil {
-		return s
-	}
-
-	var ipaddr string
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(2)
-	}
-
-	for _, a := range addrs {
-		if ip, ok := a.(*net.IPNet); ok && !ip.IP.IsLoopback() {
-			ipaddr = ip.IP.String()
-			break
-		}
-	}
-	return ipaddr
+	Storage []driver.DiskConfig `mapstructure:"storage"` 
 }
 
 func (c *CreateConfig) Prepare() []error {
@@ -54,29 +31,47 @@ func (c *CreateConfig) Prepare() []error {
 		c.GuestOSType = "otherGuest"
 	}
 
+	if c.Firmware != "" && c.Firmware != "bios" && c.Firmware != "efi" {
+		errs = append(errs, fmt.Errorf("'firmware' must be 'bios' or 'efi'"))
+	}
+
 	return errs
 }
 
 type StepCreateVM struct {
 	Config   *CreateConfig
 	Location *common.LocationConfig
+	Force    bool
 }
 
 func (s *StepCreateVM) Run(_ context.Context, state multistep.StateBag) multistep.StepAction {
 	ui := state.Get("ui").(packer.Ui)
 	d := state.Get("driver").(*driver.Driver)
 
-	packerCommon.SetHTTPIP(getHostIP(s.Config.HTTPIP))
+	vm, err := d.FindVM(s.Location.VMName)
+
+	if s.Force == false && err == nil {
+		state.Put("error", fmt.Errorf("%s already exists, you can use -force flag to destroy it: %v", s.Location.VMName, err))
+		return multistep.ActionHalt
+	} else if s.Force == true && err == nil {
+		ui.Say(fmt.Sprintf("the vm/template %s already exists, but deleting it due to -force flag", s.Location.VMName))
+		err := vm.Destroy()
+		if err != nil {
+			state.Put("error", fmt.Errorf("error destroying %s: %v", s.Location.VMName, err))
+		}
+	}
 
 	ui.Say("Creating VM...")
-	vm, err := d.CreateVM(&driver.CreateConfig{
+	vm, err = d.CreateVM(&driver.CreateConfig{
 		Cluster:             s.Location.Cluster,
 		Datastore:           s.Location.Datastore,
 		Folder:              s.Location.Folder,
 		Host:                s.Location.Host,
 		Name:                s.Location.VMName,
 		ResourcePool:        s.Location.ResourcePool,
+		Annotation:          s.Config.Notes,
 		DiskControllerType:  s.Config.DiskControllerType,
+		Firmware:            s.Config.Firmware,
 		GlobalDiskType:      s.Config.GlobalDiskType,
 		GuestOS:             s.Config.GuestOSType,
 		Networks:            s.Config.Networks,

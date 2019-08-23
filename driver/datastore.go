@@ -1,11 +1,11 @@
 package driver
 
 import (
+	"fmt"
 	"github.com/vmware/govmomi/object"
-	"github.com/vmware/govmomi/vim25/types"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/soap"
-	"fmt"
+	"github.com/vmware/govmomi/vim25/types"
 )
 
 type Datastore struct {
@@ -39,6 +39,9 @@ func (d *Driver) FindDatastore(name string, host string) (*Datastore, error) {
 
 		ds := d.NewDatastore(&i.Datastore[0])
 		inf, err := ds.Info("name")
+		if err != nil {
+			return nil, err
+		}
 		name = inf.Name
 	}
 
@@ -81,9 +84,19 @@ func (ds *Datastore) ResolvePath(path string) string {
 	return ds.ds.Path(path)
 }
 
-func (ds *Datastore) UploadFile(src, dst string) error {
+func (ds *Datastore) UploadFile(src, dst string, host string) error {
 	p := soap.DefaultUpload
-	return ds.ds.UploadFile(ds.driver.ctx, src, dst, &p)
+	ctx := ds.driver.ctx
+
+	if host != "" {
+		h, err := ds.driver.FindHost(host)
+		if err != nil {
+			return err
+		}
+		ctx = ds.ds.HostContext(ctx, h.host)
+	}
+
+	return ds.ds.UploadFile(ctx, src, dst, &p)
 }
 
 func (ds *Datastore) Delete(path string) error {
@@ -93,6 +106,15 @@ func (ds *Datastore) Delete(path string) error {
 	}
 	fm := ds.ds.NewFileManager(dc, false)
 	return fm.Delete(ds.driver.ctx, path)
+}
+
+func (ds *Datastore) MakeDirectory(path string) error {
+	dc, err := ds.driver.finder.Datacenter(ds.driver.ctx, ds.ds.DatacenterPath)
+	if err != nil {
+		return err
+	}
+	fm := ds.ds.NewFileManager(dc, false)
+	return fm.FileManager.MakeDirectory(ds.driver.ctx, path, dc, true)
 }
 
 // Cuts out the datastore prefix

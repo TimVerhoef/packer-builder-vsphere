@@ -1,14 +1,15 @@
 package testing
 
 import (
-	"fmt"
-	"math/rand"
-	"time"
 	"encoding/json"
+	"fmt"
 	"github.com/hashicorp/packer/packer"
-	"github.com/jetbrains-infra/packer-builder-vsphere/driver"
-	"testing"
 	"github.com/jetbrains-infra/packer-builder-vsphere/common"
+	"github.com/jetbrains-infra/packer-builder-vsphere/driver"
+	"math/rand"
+	"os"
+	"testing"
+	"time"
 )
 
 func NewVMName() string {
@@ -32,12 +33,20 @@ func RenderConfig(config map[string]interface{}) string {
 	return string(j)
 }
 
-
 func TestConn(t *testing.T) *driver.Driver {
+	username := os.Getenv("VSPHERE_USERNAME")
+	if username == "" {
+		username = "root"
+	}
+	password := os.Getenv("VSPHERE_PASSWORD")
+	if password == "" {
+		password = "jetbrains"
+	}
+
 	d, err := driver.NewDriver(&driver.ConnectConfig{
 		VCenterServer:      "vcenter.vsphere65.test",
-		Username:           "root",
-		Password:           "jetbrains",
+		Username:           username,
+		Password:           password,
 		InsecureConnection: true,
 	})
 	if err != nil {
@@ -57,4 +66,3 @@ func GetVM(t *testing.T, d *driver.Driver, artifacts []packer.Artifact) *driver.
 
 	return vm
 }
-
