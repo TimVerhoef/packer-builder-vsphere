@@ -10,22 +10,32 @@ import (
 )
 
 type CreateConfig struct {
-	Firmware    string `mapstructure:"firmware"`
+	Version     uint   `mapstructure:"vm_version"`
 	GuestOSType string `mapstructure:"guest_os_type"`
-	Notes       string `mapstructure:"notes"`
-	Version     uint   `mapstructure:"vm_version"` 
+	Firmware    string `mapstructure:"firmware"`
 
-	DiskControllerType string   `mapstructure:"disk_controller_type"`
-	GlobalDiskType     string   `mapstructure:"disk_type"`
-	NetworkCard        string   `mapstructure:"network_card"`
-	Networks           []string `mapstructure:"networks"`
-	USBController      bool     `mapstructure:"usb_controller"`
+	DiskControllerType  string `mapstructure:"disk_controller_type"`
+	DiskSize            int64  `mapstructure:"disk_size"`
+	DiskThinProvisioned bool   `mapstructure:"disk_thin_provisioned"`
 
-	Storage []driver.DiskConfig `mapstructure:"storage"` 
+	Network       string `mapstructure:"network"`
+	NetworkCard   string `mapstructure:"network_card"`
+	USBController bool   `mapstructure:"usb_controller"`
+
+	Notes string `mapstructure:"notes"`
+
+	GlobalDiskType string              `mapstructure:"disk_type"`
+	Networks       []string            `mapstructure:"networks"`
+	Storage        []driver.DiskConfig `mapstructure:"storage"`
 }
 
 func (c *CreateConfig) Prepare() []error {
 	var errs []error
+
+  // to do: accept parameter 'DiskSize' or 'Storage', but not both at the same time
+	if c.DiskSize == 0 {
+		errs = append(errs, fmt.Errorf("'disk_size' is required"))
+	}
 
 	if c.GuestOSType == "" {
 		c.GuestOSType = "otherGuest"
@@ -63,22 +73,25 @@ func (s *StepCreateVM) Run(_ context.Context, state multistep.StateBag) multiste
 
 	ui.Say("Creating VM...")
 	vm, err = d.CreateVM(&driver.CreateConfig{
-		Cluster:             s.Location.Cluster,
-		Datastore:           s.Location.Datastore,
-		Folder:              s.Location.Folder,
-		Host:                s.Location.Host,
-		Name:                s.Location.VMName,
-		ResourcePool:        s.Location.ResourcePool,
-		Annotation:          s.Config.Notes,
+		DiskThinProvisioned: s.Config.DiskThinProvisioned,
 		DiskControllerType:  s.Config.DiskControllerType,
-		Firmware:            s.Config.Firmware,
-		GlobalDiskType:      s.Config.GlobalDiskType,
+		DiskSize:            s.Config.DiskSize,
+		Name:                s.Location.VMName,
+		Folder:              s.Location.Folder,
+		Cluster:             s.Location.Cluster,
+		Host:                s.Location.Host,
+		ResourcePool:        s.Location.ResourcePool,
+		Datastore:           s.Location.Datastore,
 		GuestOS:             s.Config.GuestOSType,
-		Networks:            s.Config.Networks,
+		Network:             s.Config.Network,
 		NetworkCard:         s.Config.NetworkCard,
-		Storage:             s.Config.Storage,
 		USBController:       s.Config.USBController,
 		Version:             s.Config.Version,
+		Firmware:            s.Config.Firmware,
+		Annotation:          s.Config.Notes,
+		GlobalDiskType:      s.Config.GlobalDiskType,
+		Networks:            s.Config.Networks,
+		Storage:             s.Config.Storage,
 	})
 	if err != nil {
 		state.Put("error", fmt.Errorf("error creating vm: %v", err))
