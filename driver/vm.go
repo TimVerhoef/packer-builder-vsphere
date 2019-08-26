@@ -18,15 +18,16 @@ type VirtualMachine struct {
 }
 
 type CloneConfig struct {
-	Annotation   string
-	Cluster      string
-	Datastore    string
-	Folder       string
-	Host         string
-	LinkedClone  bool
 	Name         string
-	Networks     []string
+	Folder       string
+	Cluster      string
+	Host         string
 	ResourcePool string
+	Datastore    string
+	LinkedClone  bool
+	Network      string
+	Annotation   string
+	Networks     []string
 }
 
 type HardwareConfig struct {
@@ -44,22 +45,27 @@ type HardwareConfig struct {
 }
 
 type CreateConfig struct {
-	Annotation         string
-	Cluster            string
-	Datastore          string
-	DiskControllerType string   // example: "scsi", "pvscsi"
-	Firmware           string   // efi or bios
-	Folder             string
-	GlobalDiskType     string   // "thick_eager", "thick_lazy", "thin"
-	GuestOS            string   // example: otherGuest
-	Host               string
-	Name               string
-	NetworkCard        string   // example: vmxnet3
-	Networks           []string
-	ResourcePool       string
-	Storage            []DiskConfig
-	USBController      bool
-	Version            uint     // example: 10
+	DiskThinProvisioned bool
+	DiskControllerType  string // example: "scsi", "pvscsi"
+	DiskSize            int64
+
+	Annotation    string
+	Name          string
+	Folder        string
+	Cluster       string
+	Host          string
+	ResourcePool  string
+	Datastore     string
+	GuestOS       string // example: otherGuest
+	Network       string // "" for default network
+	NetworkCard   string // example: vmxnet3
+	USBController bool
+	Version       uint   // example: 10
+	Firmware      string // efi or bios
+
+	GlobalDiskType string       // "thick_eager", "thick_lazy", "thin"
+	Networks       []string
+	Storage        []DiskConfig
 }
 
 type DiskConfig struct {
@@ -128,11 +134,11 @@ func (d *Driver) CreateVM(config *CreateConfig) (*VirtualMachine, error) {
 
 	devices := object.VirtualDeviceList{}
 
-	devices, err = addDisks(d, devices, config)
+	devices, err = addDisk(d, devices, config)
 	if err != nil {
 		return nil, err
 	}
-	devices, err = addNetworks(d, devices, config)
+	devices, err = addNetwork(d, devices, config)
 	if err != nil {
 		return nil, err
 	}
@@ -487,6 +493,33 @@ func (vm *VirtualMachine) GetDir() (string, error) {
 	return "", fmt.Errorf("cannot find '%s'", vmxName)
 }
 
+func addDisk(_ *Driver, devices object.VirtualDeviceList, config *CreateConfig) (object.VirtualDeviceList, error) {
+	device, err := devices.CreateSCSIController(config.DiskControllerType)
+	if err != nil {
+		return nil, err
+	}
+	devices = append(devices, device)
+	controller, err := devices.FindDiskController(devices.Name(device))
+	if err != nil {
+		return nil, err
+	}
+	disk := &types.VirtualDisk{
+		VirtualDevice: types.VirtualDevice{
+			Key: devices.NewKey(),
+			Backing: &types.VirtualDiskFlatVer2BackingInfo{
+				DiskMode:        string(types.VirtualDiskModePersistent),
+				ThinProvisioned: types.NewBool(config.DiskThinProvisioned),
+			},
+		},
+		CapacityInKB: config.DiskSize * 1024,
+	}
+
+	devices.AssignController(disk, controller)
+	devices = append(devices, disk)
+
+	return devices, nil
+}
+
 func addDisks(_ *Driver, devices object.VirtualDeviceList, config *CreateConfig) (object.VirtualDeviceList, error) {
 	device, err := devices.CreateSCSIController(config.DiskControllerType)
 	if err != nil {
@@ -541,6 +574,45 @@ func addDisks(_ *Driver, devices object.VirtualDeviceList, config *CreateConfig)
 	return devices, nil
 }
 
+func addNetwork(d *Driver, devices object.VirtualDeviceList, config *CreateConfig) (object.VirtualDeviceList, error) {
+	var network object.NetworkReference
+	if config.Network == "" {
+		h, err := d.FindHost(config.Host)
+		if err != nil {
+			return nil, err
+		}
+
+		i, err := h.Info("network")
+		if err != nil {
+			return nil, err
+		}
+
+		if len(i.Network) > 1 {
+			return nil, fmt.Errorf("Host has multiple networks. Specify it explicitly")
+		}
+
+		network = object.NewNetwork(d.client.Client, i.Network[0])
+	} else {
+		var err error
+		network, err = d.finder.Network(d.ctx, config.Network)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	backing, err := network.EthernetCardBackingInfo(d.ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	device, err := object.EthernetCardTypes().CreateEthernetCard(config.NetworkCard, backing)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(devices, device), nil
+}
+
 func addNetworks(d *Driver, devices object.VirtualDeviceList, config *CreateConfig) (object.VirtualDeviceList, error) {
 	var network object.NetworkReference
 	if config.Networks == "" {
@@ -566,21 +638,21 @@ func addNetworks(d *Driver, devices object.VirtualDeviceList, config *CreateConf
 			if err != nil {
 				return nil, err
 			}
-		
+
 			backing, err := network.EthernetCardBackingInfo(d.ctx)
 			if err != nil {
 				return nil, err
 			}
-		
+
 			device, err := object.EthernetCardTypes().CreateEthernetCard(config.NetworkCard, backing)
 			if err != nil {
 				return nil, err
 			}
-		
+
 			devices = append(devices, device)
 		}
 	}
-	
+
 	return devices, nil
 }
 
