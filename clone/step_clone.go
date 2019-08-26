@@ -72,9 +72,9 @@ func (s *StepCloneVM) Run(ctx context.Context, state multistep.StateBag) multist
 		Datastore:    s.Location.Datastore,
 		LinkedClone:  s.Config.LinkedClone,
 		Network:      s.Config.Network,
+		Annotation:   s.Config.Notes,
 		Networks:     s.Config.Networks,
 		NetworkCard:  s.Config.NetworkCard,
-		Annotation:   s.Config.Notes,
 	})
 	if err != nil {
 		state.Put("error", err)
