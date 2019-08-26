@@ -579,6 +579,7 @@ func addNetworks(d *Driver, devices object.VirtualDeviceList, config *CreateConf
 		
 			devices = append(devices, device)
 		}
+	}
 	
 	return devices, nil
 }
