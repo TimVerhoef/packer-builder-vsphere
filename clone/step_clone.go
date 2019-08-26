@@ -10,12 +10,12 @@ import (
 )
 
 type CloneConfig struct {
+	Template      string   `mapstructure:"template"`
 	DiskSize      int64    `mapstructure:"disk_size"`
 	LinkedClone   bool     `mapstructure:"linked_clone"`
-	NetworkCard   string   `mapstructure:"network_card"`
+	Network       string   `mapstructure:"network"`
 	Networks      []string `mapstructure:"networks"`
 	Notes         string   `mapstructure:"notes"`
-	Template      string   `mapstructure:"template"`
 }
 
 func (c *CloneConfig) Prepare() []error {
@@ -63,15 +63,16 @@ func (s *StepCloneVM) Run(ctx context.Context, state multistep.StateBag) multist
 	}
 
 	vm, err = template.Clone(ctx, &driver.CloneConfig{
-		Cluster:      s.Location.Cluster,
-		Datastore:    s.Location.Datastore,
-		Folder:       s.Location.Folder,
-		Host:         s.Location.Host,
 		Name:         s.Location.VMName,
+		Folder:       s.Location.Folder,
+		Cluster:      s.Location.Cluster,
+		Host:         s.Location.Host,
 		ResourcePool: s.Location.ResourcePool,
+		Datastore:    s.Location.Datastore,
 		LinkedClone:  s.Config.LinkedClone,
-		NetworkCard:  s.Config.NetworkCard,
+		Network:      s.Config.Network,
 		Networks:     s.Config.Networks,
+		NetworkCard:  s.Config.NetworkCard,
 		Annotation:   s.Config.Notes,
 	})
 	if err != nil {
