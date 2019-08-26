@@ -503,6 +503,7 @@ func addDisk(_ *Driver, devices object.VirtualDeviceList, config *CreateConfig) 
 	if err != nil {
 		return nil, err
 	}
+
 	disk := &types.VirtualDisk{
 		VirtualDevice: types.VirtualDevice{
 			Key: devices.NewKey(),
