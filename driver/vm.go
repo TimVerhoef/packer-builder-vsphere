@@ -614,50 +614,6 @@ func addNetwork(d *Driver, devices object.VirtualDeviceList, config *CreateConfi
 	return append(devices, device), nil
 }
 
-func addNetworks(d *Driver, devices object.VirtualDeviceList, config *CreateConfig) (object.VirtualDeviceList, error) {
-	if len(config.Networks) == 0 {
-	  var network object.NetworkReference
-
-		h, err := d.FindHost(config.Host)
-		if err != nil {
-			return nil, err
-		}
-
-		i, err := h.Info("network")
-		if err != nil {
-			return nil, err
-		}
-
-		if len(i.Network) > 1 {
-			return nil, fmt.Errorf("Host has multiple networks. Specify it explicitly")
-		}
-
-		network = object.NewNetwork(d.client.Client, i.Network[0])
-	} else {
-		// var err error
-		for _, networkName := range config.Networks {
-			network, err := d.finder.Network(d.ctx, networkName)
-			if err != nil {
-				return nil, err
-			}
-
-			backing, err := network.EthernetCardBackingInfo(d.ctx)
-			if err != nil {
-				return nil, err
-			}
-
-			device, err := object.EthernetCardTypes().CreateEthernetCard(config.NetworkCard, backing)
-			if err != nil {
-				return nil, err
-			}
-
-			devices = append(devices, device)
-		}
-	}
-
-	return devices, nil
-}
-
 func (vm *VirtualMachine) AddCdrom(controllerType string, isoPath string) error {
 	devices, err := vm.vm.Device(vm.driver.ctx)
 	if err != nil {
