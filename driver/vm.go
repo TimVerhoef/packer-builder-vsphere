@@ -28,6 +28,7 @@ type CloneConfig struct {
 	Network      string
 	Annotation   string
 	Networks     []string
+	NetworkCard  string
 }
 
 type HardwareConfig struct {
