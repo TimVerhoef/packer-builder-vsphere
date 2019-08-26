@@ -616,7 +616,7 @@ func addNetwork(d *Driver, devices object.VirtualDeviceList, config *CreateConfi
 
 func addNetworks(d *Driver, devices object.VirtualDeviceList, config *CreateConfig) (object.VirtualDeviceList, error) {
 	var network object.NetworkReference
-	if config.Networks == "" {
+	if len(config.Networks) == 0 {
 		h, err := d.FindHost(config.Host)
 		if err != nil {
 			return nil, err
