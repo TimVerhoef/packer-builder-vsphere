@@ -10,11 +10,11 @@ import (
 )
 
 type CloneConfig struct {
-	Template    string  `mapstructure:"template"`
-	DiskSize    int64   `mapstructure:"disk_size"`
-	LinkedClone bool    `mapstructure:"linked_clone"`
-	Network     string  `mapstructure:"network"`
-	Notes       string  `mapstructure:"notes"`
+	Template    string `mapstructure:"template"`
+	DiskSize    int64  `mapstructure:"disk_size"`
+	LinkedClone bool   `mapstructure:"linked_clone"`
+	Network     string `mapstructure:"network"`
+	Notes       string `mapstructure:"notes"`
 
 	Networks []string `mapstructure:"networks"`
 }
