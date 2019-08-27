@@ -90,19 +90,19 @@ See complete Ubuntu, Windows, and macOS templates in the [examples folder](https
 * `firmware`(string) - Set the Firmware at machine creation. Example `efi`. Defaults to `bios`.
 * `networks`(array of strings) - List of networks the VM will be connected to. Supersedes `network`.
 * `storage`(array of disk definitions) - List of disks definitions. Supersedes `disk_size`. A disk definition consists of `disk_name` (optional, for human readability only), `disk_size` (required, size in MB) and `disk_type` (optional, see `disk_type` below).
-```
-"storage": [
-  {
-    "disk_name": "sda",
-    "disk_size": 8192,
-    "disk_type": "thin"
-  },
-  {
-    "disk_name": "sdb",
-    "disk_size": 16384,
-  }
-]
-```
+    ```
+    "storage": [
+      {
+        "disk_name": "sda",
+        "disk_size": 8192,
+        "disk_type": "thin"
+      },
+      {
+        "disk_name": "sdb",
+        "disk_size": 16384,
+      }
+    ]
+    ```
 * `disk_type`(string) - Type of disk to create. One of `thick_eager`, `thick_lazy` or `thin`. Defaults to `thick_lazy`. Can be overridden per disk in the `storage` array.
     ```
     thick_eager -> create a thick eager zeroed disk (pre-allocate space; immediately zero out)
