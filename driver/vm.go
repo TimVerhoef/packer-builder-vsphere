@@ -27,8 +27,6 @@ type CloneConfig struct {
 	LinkedClone  bool
 	Network      string
 	Annotation   string
-	Networks     []string
-	NetworkCard  string
 }
 
 type HardwareConfig struct {
