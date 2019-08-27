@@ -621,7 +621,6 @@ func addNetwork(d *Driver, devices object.VirtualDeviceList, config *CreateConfi
 }
 
 func addNetworks(d *Driver, devices object.VirtualDeviceList, config *CreateConfig) (object.VirtualDeviceList, error) {
-	var err error
 	for _, networkName := range config.Networks {
     network, err := d.finder.Network(d.ctx, networkName)
 		if err != nil {
