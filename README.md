@@ -91,22 +91,23 @@ See complete Ubuntu, Windows, and macOS templates in the [examples folder](https
 * `networks`(array of strings) - List of networks the VM will be connected to. Supersedes `network`.
 * `disk_type`(string) - Type of disk to create. One of `thick_eager`, `thick_lazy` or `thin`. Defaults to `thick_lazy`. Can be overridden per disk in the `storage` array.
 * `storage`(array of disk definitions) - List of disks definitions. Supersedes `disk_size`.
-    ```
-    "storage": [
-      {
-        "disk_name": "sda",
-        "disk_size": 8192,
-        "disk_type": "thin"
-      },
-      {
-        "disk_name": "sdb",
-        "disk_size": 16384,
-      }
-    ]
-    ```
     * `disk_name`(string) - For human readability only (optional).
     * `disk_size`(number) - The size of the disk in MB.
     * `disk_type`(string) - The type of disk (optional, see `disk_type`).
+
+```
+"storage": [
+  {
+    "disk_name": "sda",
+    "disk_size": 8192,
+    "disk_type": "thin"
+  },
+  {
+    "disk_name": "sdb",
+    "disk_size": 16384,
+  }
+]
+```
 
 ### Boot (`vsphere-iso` only)
 
