@@ -89,7 +89,16 @@ See complete Ubuntu, Windows, and macOS templates in the [examples folder](https
 * `cdrom_type`(string) - Which controller to use. Example `sata`. Defaults to `ide`.
 * `firmware`(string) - Set the Firmware at machine creation. Example `efi`. Defaults to `bios`.
 * `networks`(array of strings) - List of networks the VM will be connected to. Supersedes `network`.
-* `storage`(array of disk definitions) - List of disks definitions. Supersedes `disk_size`. A disk definition consists of `disk_name` (optional, for human readability only), `disk_size` (required, size in MB) and `disk_type` (optional, see `disk_type` below).
+* `disk_type`(string) - Type of disk to create. One of `thick_eager`, `thick_lazy` or `thin`. Defaults to `thick_lazy`. Can be overridden per disk in the `storage` array.
+    ```
+    thick_eager -> create a thick eager zeroed disk (pre-allocate space; immediately zero out)
+    thick_lazy  -> create a thick lazy zeroed disk  (pre-allocate space; postpone zero out)
+    thin        -> create a thin disk               (allocate space on demand)
+    ```
+* `storage`(array of disk definitions) - List of disks definitions. Supersedes `disk_size`.
+    * `disk_name`(string) - For human readability only (optional).
+    * `disk_size`(number) - The size of the disk in MB.
+    * `disk_type`(string) - The type of disk (optional, see `disk_type`).
     ```
     "storage": [
       {
@@ -102,12 +111,6 @@ See complete Ubuntu, Windows, and macOS templates in the [examples folder](https
         "disk_size": 16384,
       }
     ]
-    ```
-* `disk_type`(string) - Type of disk to create. One of `thick_eager`, `thick_lazy` or `thin`. Defaults to `thick_lazy`. Can be overridden per disk in the `storage` array.
-    ```
-    thick_eager -> create a thick eager zeroed disk (pre-allocate space; immediately zero out)
-    thick_lazy  -> create a thick lazy zeroed disk  (pre-allocate space; postpone zero out)
-    thin        -> create a thin disk               (allocate space on demand)
     ```
 
 ### Boot (`vsphere-iso` only)
