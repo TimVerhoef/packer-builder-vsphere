@@ -45,15 +45,15 @@ func (c *CreateConfig) Prepare() []error {
 		}
 
 		if dc.DiskType == "thin" {
-			dc.diskEagerlyScrub := false
-			dc.diskThinProvisioned := true
+			c.Storage[disk].diskEagerlyScrub = false
+			c.Storage[disk].diskThinProvisioned = true
 		} else if dc.DiskType == "thick_eager" {
-			dc.diskEagerlyScrub := true
-			dc.diskThinProvisioned := false
+			c.Storage[disk].diskEagerlyScrub = true
+			c.Storage[disk].diskThinProvisioned = false
 		} else {
 			// default: dc.DiskType == "thick_lazy"
-			dc.diskEagerlyScrub := false
-			dc.diskThinProvisioned := false
+			c.Storage[disk].diskEagerlyScrub = false
+			c.Storage[disk].diskThinProvisioned = false
 		}
 	}
 
