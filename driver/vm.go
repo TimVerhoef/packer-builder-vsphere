@@ -551,11 +551,8 @@ func addDisks(_ *Driver, devices object.VirtualDeviceList, config *CreateConfig)
 		} else if dc.DiskType == "thick_eager" {
 			dc.diskEagerlyScrub    = true
 			dc.diskThinProvisioned = false
-		} else if dc.DiskType == "thick_lazy" {
-			dc.diskEagerlyScrub    = false
-			dc.diskThinProvisioned = false
 		} else {
-			// default disk type: Thick provisioned lazy zeroed
+			// default: dc.DiskType == "thick_lazy"
 			dc.diskEagerlyScrub    = false
 			dc.diskThinProvisioned = false
 		}
