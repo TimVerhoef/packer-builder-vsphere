@@ -72,8 +72,8 @@ type DiskConfig struct {
 	DiskSize int64   `mapstructure:"disk_size"`
 	DiskType string  `mapstructure:"disk_type"`
 
-	diskEagerlyScrub    bool
-	diskThinProvisioned bool
+	DiskEagerlyScrub    bool
+	DiskThinProvisioned bool
 }
 
 func (d *Driver) NewVM(ref *types.ManagedObjectReference) *VirtualMachine {
