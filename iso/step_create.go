@@ -39,6 +39,24 @@ func (c *CreateConfig) Prepare() []error {
 		errs = append(errs, fmt.Errorf("either 'disk_size' or 'storage' is required"))
 	}
 
+	for disk, dc := range c.Storage {
+		if dc.DiskType == "" && c.GlobalDiskType != "" {
+			dc.DiskType = c.GlobalDiskType
+		}
+
+		if dc.DiskType == "thin" {
+			dc.diskEagerlyScrub= false
+			dc.diskThinProvisioned = true
+		} else if dc.DiskType == "thick_eager" {
+			dc.diskEagerlyScrub= true
+			dc.diskThinProvisioned = false
+		} else {
+			// default: dc.DiskType == "thick_lazy"
+			dc.diskEagerlyScrub= false
+			dc.diskThinProvisioned = false
+		}
+	}
+
 	if c.GuestOSType == "" {
 		c.GuestOSType = "otherGuest"
 	}
